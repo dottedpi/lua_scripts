@@ -75,6 +75,8 @@ function factory () return function ()
 	table.insert(dialog_options,{ type = "label", title = "Ticking the following checkbox will send each instrument \nto the MIDI channel number indicated next to its name. NOT WORKING YET" })
 	table.insert(dialog_options,{ type = "checkbox", key = "onoff_separate_channels", default = false, title = "Seperate MIDI-Channels"})
 
+	table.insert(dialog_options,{ type = "checkbox", key = "auto_connect_to_rd8", defaul = false, title = "Try to auto-connect all new tracks to the RD8?"}) 
+
 	local od = LuaDialog.Dialog("RD8 MIDI Splitter Setup", dialog_options)
 	local rv = od:run()
 
@@ -90,7 +92,7 @@ function factory () return function ()
 		if rv["onoff_"..rd8_inst["inst"]] then
 			--print(rd8_inst["name"])	--debug point
 			
-			cur_inst_tracklist = Session:new_midi_track (ARDOUR.ChanCount(ARDOUR.DataType ("midi"), 1),  ARDOUR.ChanCount(ARDOUR.DataType ("midi"), 1), false, ARDOUR.PluginInfo(), nil, nil, 1, "RD8_MIDI_"..rd8_inst["name"].."("..tostring(rd8_inst_id)..")", ARDOUR.PresentationInfo.max_order, ARDOUR.TrackMode.Normal)
+			cur_inst_tracklist = Session:new_midi_track(ARDOUR.ChanCount(ARDOUR.DataType.midi(), 1),  ARDOUR.ChanCount(ARDOUR.DataType ("midi"), 1), false, ARDOUR.PluginInfo(), nil, nil, 1, "RD8_MIDI_"..rd8_inst["inst"].."("..tostring(rd8_inst_id)..")", ARDOUR.PresentationInfo.max_order, ARDOUR.TrackMode.Normal)
 			
 			for cur_track in cur_inst_tracklist:iter() do
 				--print(cur_track:name()) --debug point
@@ -128,6 +130,42 @@ function factory () return function ()
 		end
 	end
 
+	------------------------------------------------
+	--auto-connect to the rd8 if enabled and found--
+	------------------------------------------------
+
+	local rd8_found = false
+	local rd8_port = nil
+
+	if rv["auto_connect_to_rd8"] then 
+		_, t = Session:engine ():get_backend_ports ("", ARDOUR.DataType("midi"), ARDOUR.PortFlags.IsInput | ARDOUR.PortFlags.IsPhysical, C.StringVector ())
+		local i = 1
+		repeat
+			local p = t[4]:table()[i]
+				if (p) then
+					if Session:engine (): get_pretty_name_by_name(p) == "RD-8" then
+						rd8_port = p
+						rd8_found = true
+					end
+				end
+			i = i + 1
+		until ((rd8_found) or p == nil)
+	
+
+		if not rd8_found then 
+			LuaDialog.Message ("The RD8 appears to be disconnected", "Could not auto-connect new tracks", LuaDialog.MessageType.Warning, LuaDialog.ButtonType.Close):run()
+			goto script_end
+		else
+			for rd8_inst_id, rd8_inst in pairs(rd8) do
+				if rv["onoff_"..rd8_inst["inst"]] then
+					Session:engine (): connect ("ardour:RD8_MIDI_"..rd8_inst["inst"].."("..tostring(rd8_inst_id)..")/midi_out 1",rd8_port)
+				end
+		
+			end
+		end
+	end
+	
+	t = nil
 	new_region = nil
 	cur_inst_tracklist = nil
 	filtered_note = nil
