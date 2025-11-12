@@ -46,12 +46,17 @@ function factory () return function ()
 	local rd8_track_name = "RD8_MIDI_Master"    -- the name of the MIDI Master track to match 
 	
 	for track in Session:get_tracks():iter() do                                                         --iterate over all tracks in the session
-		if (string.find(track:name(), rd8_track_name) and track:data_type():to_string() == "midi") then --check if valid RD8_MIDI_Master exists
+		if (not rd8_midi_master_found) and (string.find(track:name(), rd8_track_name) and track:data_type():to_string() == "midi") then --check if valid RD8_MIDI_Master exists
 			rd8_midi_master_found = true						
 			local rd8_midi_master_track = track:to_track():to_midi_track()						        --select the first valid option
-			break
             --print(tostring(rd8_midi_master_track:get_playback_channel_mode()))					
 			--print(string.format("%x",rd8_midi_master_track:get_playback_channel_mask()))
+		end
+
+		for rd8_inst_id, rd8_inst in pairs(rd8) do
+			if string.find(track:name(),"RD8_MIDI_"..rd8_inst["inst"]) then
+				rd8[rd8_inst_id]["MIDI_track_found"] = true
+			end
 		end
 	end
 
@@ -67,8 +72,9 @@ function factory () return function ()
 	local dialog_options = {}
 
 	table.insert(dialog_options, { type = "heading", title = "Select instruments to create their MIDI track:" })
-	for rd8_inst_number, rd8_inst in pairs(rd8) do
-		table.insert(dialog_options, { type = "checkbox", key = "onoff_"..rd8_inst["inst"], default = false, title = rd8_inst["name"] })	
+	
+	for _, rd8_inst in pairs(rd8) do
+		table.insert(dialog_options, { type = "checkbox", key = "sel_"..rd8_inst["inst"], default = false, title = rd8_inst["name"] })	
 	end
 
 	table.insert(dialog_options,{ type = "heading", title = "Further options:" })
@@ -87,32 +93,30 @@ function factory () return function ()
     if rv["auto_connect_to_rd8"] then
         
         local rd8_found = false
-        local _, t = Session:engine ():get_backend_ports ("", ARDOUR.DataType("midi"), ARDOUR.PortFlags.IsInput | ARDOUR.PortFlags.IsPhysical, C.StringVector ())
+        local _, t = Session:engine():get_backend_ports("", ARDOUR.DataType("midi"), ARDOUR.PortFlags.IsInput | ARDOUR.PortFlags.IsPhysical, C.StringVector ())
 
-        for __,p in pairs(t[4]:table()) do 
-            if (p) then
-                if Session:engine (): get_pretty_name_by_name(p) == "RD-8" then
-                    local rd8_port = p
-                    rd8_found = true
-                    break
-                end
+        for _, p in pairs(t[4]:table()) do 
+            if Session:engine():get_pretty_name_by_name(p) == "RD-8" then
+                local rd8_port = p
+                rd8_found = true
+                break
             end
         end
     end
 
     if (not rd8_found) and rv["auto_connect_to_rd8"] then
-		LuaDialog.Message ("RD-8 disconnected?", "Cannot auto-connect new tracks!", LuaDialog.MessageType.Warning, LuaDialog.ButtonType.Close):run()
+		LuaDialog.Message("RD-8 disconnected?", "Cannot auto-connect new tracks!", LuaDialog.MessageType.Warning, LuaDialog.ButtonType.Close):run()
 	end
 
 	-------------------------------------
 	--loop through selected instruments--
 	-------------------------------------
-
+	
 	for rd8_inst_id, rd8_inst in pairs(rd8) do
-		if rv["onoff_"..rd8_inst["inst"]] then
+		if rv["sel_"..rd8_inst["inst"]] then
 			--auto-connect to the RD-8 if enabled and found
             if rd8_found then
-			    Session:engine (): connect ("ardour:RD8_MIDI_"..rd8_inst["inst"].."/midi_out 1",rd8_port)
+			    Session:engine():connect("ardour:RD8_MIDI_"..rd8_inst["inst"].."/midi_out 1",rd8_port)
 		    end
 
             --MIDI track creation
