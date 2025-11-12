@@ -48,7 +48,7 @@ function factory () return function ()
 	for track in Session:get_tracks():iter() do                                                         --iterate over all tracks in the session
 		if (not rd8_midi_master_found) and (string.find(track:name(), rd8_track_name) and track:data_type():to_string() == "midi") then --check if valid RD8_MIDI_Master exists
 			rd8_midi_master_found = true						
-			local rd8_midi_master_track = track:to_track():to_midi_track()						        --select the first valid option
+			rd8_midi_master_track = track:to_track():to_midi_track()						        --select the first valid option
             --print(tostring(rd8_midi_master_track:get_playback_channel_mode()))					
 			--print(string.format("%x",rd8_midi_master_track:get_playback_channel_mask()))
 		end
@@ -56,6 +56,7 @@ function factory () return function ()
 		for rd8_inst_id, rd8_inst in pairs(rd8) do
 			if string.find(track:name(),"RD8_MIDI_"..rd8_inst["inst"]) then
 				rd8[rd8_inst_id]["MIDI_track_found"] = true
+				rd8[rd8_inst_id]["MIDI_track_id"] = track:to_stateful():id()
 			end
 		end
 	end
@@ -79,8 +80,8 @@ function factory () return function ()
 
 	table.insert(dialog_options,{ type = "heading", title = "Further options:" })
 
-	table.insert(dialog_options,{ type = "checkbox", key = "auto_connect_to_rd8", default = true, title = "Auto-connect new track outputs to the RD-8"}) 
-    table.insert(dialog_options,{ type = "checkbox", key = "create_audio_tracks", default = true, title = "Create audio tracks (Mono) per instrument" })
+	table.insert(dialog_options,{ type = "checkbox", key = "auto_connect_to_rd8", default = false, title = "Auto-connect new track outputs to the RD-8"}) 
+    table.insert(dialog_options,{ type = "checkbox", key = "create_audio_tracks", default = false, title = "Create audio tracks (Mono) per instrument" })
 
 	local od = LuaDialog.Dialog("RD-8 MIDI Splitter Setup", dialog_options)
 	local rv = od:run()
@@ -119,40 +120,44 @@ function factory () return function ()
 			    Session:engine():connect("ardour:RD8_MIDI_"..rd8_inst["inst"].."/midi_out 1",rd8_port)
 		    end
 
-            --MIDI track creation
-			local cur_inst_tracklist = Session:new_midi_track(ARDOUR.ChanCount(ARDOUR.DataType("midi"), 1), ARDOUR.ChanCount(ARDOUR.DataType("midi"), 1), false, ARDOUR.PluginInfo(), nil, nil, 1, "RD8_MIDI_"..rd8_inst["inst"], ARDOUR.PresentationInfo.max_order, ARDOUR.TrackMode.Normal)
-
+            --MIDI track creation if it does not exist 
+			if not rd8_inst["MIDI_track_found"] then
+				local cur_inst_tracklist = Session:new_midi_track(ARDOUR.ChanCount(ARDOUR.DataType("midi"), 1), ARDOUR.ChanCount(ARDOUR.DataType("midi"), 1), false, ARDOUR.PluginInfo(), nil, nil, 1, "RD8_MIDI_"..rd8_inst["inst"], ARDOUR.PresentationInfo.max_order, ARDOUR.TrackMode.Normal)
+				rd8_inst["MIDI_track_id"] = Session:route_by_name("RD8_MIDI_"..rd8_inst["inst"]):to_stateful():id()
+			end 
+				
 			--audio track creation if enabled
             if rv["create_audio_tracks"] then
                 Session:new_audio_track(1,2,nil,1,"RD8_"..rd8_inst["inst"],ARDOUR.PresentationInfo.max_order,ARDOUR.TrackMode.Normal)    
             end
 
-            --get the MIDI track from the one-element-list cur_inst_tracklist and filter MIDI data
-			for cur_track in cur_inst_tracklist:iter() do
-                for region in rd8_midi_master_track:playlist():region_list():iter() do
-					if region:isnil() then break end
+            --get the MIDI track for the current instrument 
+			local cur_track = Session:route_by_id(rd8_inst["MIDI_track_id"]):to_track()
+                
+			for region in rd8_midi_master_track:playlist():region_list():iter() do
+				if region:isnil() then break end
 				
-					local new_region = ARDOUR.RegionFactory.clone_region(region, true, true):to_midiregion() 
-					
-					local midi_model = region:to_midiregion():midi_source(0):model()				
-					local midi_command = midi_model:new_note_diff_command("Filter MIDI Events")
+				local new_region = ARDOUR.RegionFactory.clone_region(region, true, true):to_midiregion() 
+				
+				local midi_model = region:to_midiregion():midi_source(0):model()				
+				local midi_command = midi_model:new_note_diff_command("Filter MIDI Events")
 
-					local cur_model = new_region:midi_source(0):model()
-					local cur_command = cur_model:new_note_diff_command("Write MIDI Events")
-					
-					for note in ARDOUR.LuaAPI.note_list (midi_model):iter() do
-						if note:note() == rd8_inst["note"] then	     
-							local filtered_note = ARDOUR.LuaAPI.new_noteptr(rd8_inst_id, note:time(), note:length(), note:note(), note:velocity())  --separate midi channel per instrument per default
-							cur_command:add(filtered_note)			
-						end
-						cur_command:remove(note)		
+				local cur_model = new_region:midi_source(0):model()
+				local cur_command = cur_model:new_note_diff_command("Write MIDI Events")
+
+				--filter notes per region and copy them if they belong to the current instrument  
+				for note in ARDOUR.LuaAPI.note_list (midi_model):iter() do
+					if note:note() == rd8_inst["note"] then	     							
+						local filtered_note = ARDOUR.LuaAPI.new_noteptr(rd8_inst_id, note:time(), note:length(), note:note(), note:velocity())  --separate midi channel per instrument per default
+						cur_command:add(filtered_note)			
 					end
-			
-					midi_model:apply_command(Session, midi_command)
-					cur_model:apply_command(Session, cur_command)
-
-					cur_track:playlist():add_region(new_region, region:position(), 1, false, 0, 0, false) 	--add new_region to created instrument track
+					cur_command:remove(note)		
 				end
+			
+				midi_model:apply_command(Session, midi_command)
+				cur_model:apply_command(Session, cur_command)
+
+				cur_track:playlist():add_region(new_region, region:position(), 1, false, 0, 0, false) 	--add new_region to created instrument track
 			end
 		end
 	end
