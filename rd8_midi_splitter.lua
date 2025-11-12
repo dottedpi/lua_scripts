@@ -44,12 +44,11 @@ function factory () return function ()
 
 	local rd8_midi_master_found = false
 	local rd8_track_name = "RD8_MIDI_Master"    -- the name of the MIDI Master track to match 
-	local rd8_midi_master_track = nil
-
+	
 	for track in Session:get_tracks():iter() do                                                         --iterate over all tracks in the session
 		if (string.find(track:name(), rd8_track_name) and track:data_type():to_string() == "midi") then --check if valid RD8_MIDI_Master exists
 			rd8_midi_master_found = true						
-			rd8_midi_master_track = track:to_track():to_midi_track()						            --select the first valid option
+			local rd8_midi_master_track = track:to_track():to_midi_track()						            --select the first valid option
 			break
             --print(tostring(rd8_midi_master_track:get_playback_channel_mode()))					
 			--print(string.format("%x",rd8_midi_master_track:get_playback_channel_mask()))
