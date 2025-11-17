@@ -48,19 +48,19 @@ function factory () return function ()
 	local n_rd8_regions = 0
 
 	for track in Session:get_tracks():iter() do
-		if track:data_type():to_string() == "midi" then                                         --iterate over all MIDI tracks in the session
-			if (not rd8_midi_master_found) and (string.find(track:name(), rd8_track_name)) then --check if valid RD8_MIDI_Master exists
+		if track:data_type():to_string() == "midi" then                                         	--iterate over all MIDI tracks in the session
+			if (not rd8_midi_master_found) and (string.find(track:name(), rd8_track_name)) then 	--check if valid RD8_MIDI_Master exists
 				rd8_midi_master_found = true
-				RD8_MASTER_TRACK = track:to_track():to_midi_track()								--select the first valid option 
+				rd8["mastertrack"] = track:to_track():to_midi_track()								--select the first valid option 
 
-				for reg in RD8_MASTER_TRACK:playlist():region_list():iter() do
+				for reg in rd8["mastertrack"]:playlist():region_list():iter() do
 					rd8_master_region_ids[reg:to_stateful():id():to_s()] = true
 					n_rd8_regions = n_rd8_regions + 1
 				end
 			end
 
 			--check if the MIDI track is an instrument MIDI track as created by the script (and get its ID)
-			for rd8_inst_id, rd8_inst in pairs(rd8) do
+			for rd8_inst_id, rd8_inst in ipairs(rd8) do
 				if string.find(track:name(),"RD8_MIDI_"..rd8_inst["inst"]) then
 					rd8[rd8_inst_id]["MIDI_track_found"] = true
 					rd8[rd8_inst_id]["MIDI_track_id"] = track:to_stateful():id()
@@ -117,7 +117,7 @@ function factory () return function ()
 
 	table.insert(dialog_options, { type = "heading", title = "Select instruments to create their MIDI track:" })
 
-	for _, rd8_inst in pairs(rd8) do
+	for _, rd8_inst in ipairs(rd8) do
 		table.insert(dialog_options, { type = "checkbox", key = "sel_"..rd8_inst["inst"], default = false, title = rd8_inst["name"] })
 	end
 
@@ -137,19 +137,18 @@ function factory () return function ()
 
 	if rv["auto_connect_to_rd8"] then
 
-        local rd8_found = false
         local _, t = Session:engine():get_backend_ports("", ARDOUR.DataType("midi"), ARDOUR.PortFlags.IsInput | ARDOUR.PortFlags.IsPhysical, C.StringVector ())
 
         for _, p in pairs(t[4]:table()) do
             if Session:engine():get_pretty_name_by_name(p) == "RD-8" then
-                RD8_PORT = p
-                rd8_found = true
+                rd8["port"] = p
+                rd8["found"] = true
                 break
             end
         end
     end
 
-    if (not rd8_found) and rv["auto_connect_to_rd8"] then
+    if (not rd8["found"]) and rv["auto_connect_to_rd8"] then
 		LuaDialog.Message("RD-8 disconnected?", "Cannot auto-connect new tracks!", LuaDialog.MessageType.Warning, LuaDialog.ButtonType.Close):run()
 	end
 
@@ -157,11 +156,11 @@ function factory () return function ()
 	--main loop (through selected instruments)--
 	--------------------------------------------
 
-	for rd8_inst_id, rd8_inst in pairs(rd8) do
+	for rd8_inst_id, rd8_inst in ipairs(rd8) do
 		if rv["sel_"..rd8_inst["inst"]] then
 			--if auto-connect is enabled and RD-8 found, connect tracks to RD-8 MIDI input
             if rd8_found then
-			    Session:engine():connect("ardour:RD8_MIDI_"..rd8_inst["inst"].."/midi_out 1", RD8_PORT)
+			    Session:engine():connect("ardour:RD8_MIDI_"..rd8_inst["inst"].."/midi_out 1", rd8["port"])
 		    end
 
             --MIDI track creation if it does not exist 
@@ -178,7 +177,7 @@ function factory () return function ()
             --get the MIDI track for the current instrument 
 			local cur_track = Session:route_by_id(rd8_inst["MIDI_track_id"]):to_track()
 
-			for _, region in pairs(RD8_MASTER_TRACK:playlist():region_list():table()) do	--loop over valid regions 
+			for _, region in pairs(rd8["mastertrack"]:playlist():region_list():table()) do	--loop over valid regions 
 				if continue_on_full_track or ((not continue_on_full_track) and filtered_region_ids[region:to_stateful():id():to_s()]) then
 					local new_region = ARDOUR.RegionFactory.clone_region(region, true, true):to_midiregion()
 
@@ -205,8 +204,6 @@ function factory () return function ()
 		end
 	end
 
-	RD8_MASTER_TRACK = nil
-	RD8_PORT = nil
 	collectgarbage()
 
 	::script_end::
